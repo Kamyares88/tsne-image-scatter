@@ -3,6 +3,13 @@ import matplotlib.pyplot as plt
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 import random
 
+def normalize_coordinates(coords):
+    """Normalize coordinates to have similar scale"""
+    coords = np.array(coords)
+    coords = coords - coords.min(axis=0)
+    coords = coords / coords.max(axis=0)
+    return coords * 100  # Scale to 100x100 grid
+
 def points_overlap(p1, p2, min_dist):
     """Check if two points are too close to each other"""
     return np.sqrt(((p1[0] - p2[0]) ** 2) + ((p1[1] - p2[1]) ** 2)) < min_dist
@@ -42,23 +49,26 @@ def adjust_point_position(point, existing_points, min_dist, max_attempts=50):
     # If we couldn't find a non-overlapping position, return the original point
     return original_point
 
-def imscatter(x, y, images, ax=None, zoom=1.0, min_dist=None):
+def imscatter(x, y, images, ax=None, zoom=1.0):
+    """Plot images as scatter points"""
     if ax is None:
         ax = plt.gca()
     
-    if min_dist is None:
-        # Estimate minimum distance based on figure size and zoom
-        bbox = ax.get_window_extent()
-        min_dist = zoom * 100 * (bbox.width / len(x))  # Adjust this multiplier as needed
+    # Convert coordinates to numpy array and normalize
+    points = np.column_stack([x, y])
+    
+    # Calculate appropriate minimum distance based on point density
+    area = (points[:, 0].max() - points[:, 0].min()) * (points[:, 1].max() - points[:, 1].min())
+    point_density = len(points) / area
+    min_dist = 1 / (2 * np.sqrt(point_density))  # Adjust this factor as needed
     
     artists = []
     placed_points = []
     
-    # Sort points by distance from center to handle central clustering better
-    points = np.column_stack([x, y])
+    # Process points from outside to inside
     center = np.mean(points, axis=0)
     distances = np.linalg.norm(points - center, axis=1)
-    sorted_indices = np.argsort(distances)
+    sorted_indices = np.argsort(-distances)  # Note the negative sign to sort from outside in
     
     for idx in sorted_indices:
         point = points[idx]
@@ -68,12 +78,15 @@ def imscatter(x, y, images, ax=None, zoom=1.0, min_dist=None):
         adjusted_point = adjust_point_position(point, placed_points, min_dist)
         placed_points.append(adjusted_point)
         
+        # Create image scatter point
         im = OffsetImage(img, zoom=zoom)
         ab = AnnotationBbox(im, adjusted_point, xycoords='data', frameon=False)
         artists.append(ax.add_artist(ab))
     
-    ax.update_datalim(np.column_stack([x, y]))
+    # Update plot limits
+    ax.update_datalim(points)
     ax.autoscale()
+    
     return artists
 
 def visualize_tsne_images(tsne_results, images, n_samples=1000, figsize=(20, 20), zoom=0.3):
@@ -93,6 +106,9 @@ def visualize_tsne_images(tsne_results, images, n_samples=1000, figsize=(20, 20)
     zoom : float
         Zoom factor for the images
     """
+    # Normalize the t-SNE coordinates
+    tsne_results = normalize_coordinates(tsne_results)
+    
     # Downsample if necessary
     if len(tsne_results) > n_samples:
         indices = random.sample(range(len(tsne_results)), n_samples)
@@ -107,6 +123,9 @@ def visualize_tsne_images(tsne_results, images, n_samples=1000, figsize=(20, 20)
     
     # Plot images instead of points
     imscatter(tsne_subset[:, 0], tsne_subset[:, 1], images_subset, ax=ax, zoom=zoom)
+    
+    # Set equal aspect ratio to prevent distortion
+    ax.set_aspect('equal')
     
     plt.xlabel('t-SNE 1')
     plt.ylabel('t-SNE 2')
